@@ -1,9 +1,7 @@
- HEAD
 .venv/
+venv/
 __pycache__/
 *.pyc
 tasks.db
 .idea/
-
 node_modules/
-9d56f875176f434bc150495683eec9934cd7520c
