@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from models import TaskCreate, TaskUpdate
-from database import init_db
+from database import init_db, get_connection
 
 app = FastAPI()
 init_db()  # creates tasks.db, the tasks table, and seeds 3 tasks — once
@@ -13,14 +13,19 @@ next_id = 1
 
 @app.get("/tasks")
 def get_tasks():
-    return tasks
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM tasks").fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 @app.get("/tasks/{task_id}")
 def get_task(task_id: int):
-    for t in tasks:
-        if t["id"] == task_id:
-            return t
-    raise HTTPException(status_code=404, detail="Task not found")
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return dict(row)
 
 @app.post("/tasks", status_code=201)
 def create_task(task: TaskCreate):
