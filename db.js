@@ -35,8 +35,8 @@ if (count === 0) {
 
   seedTasks([
     { title: 'Buy milk', done: false },
-    { title: 'Read the SQLite docs', done: false },
-    { title: 'Finish FlyRank Assignment 1', done: true },
+    { title: 'Walk the dog', done: false },
+    { title: 'Finish assignment', done: true },
   ]);
 
   console.log('Database seeded with 3 example tasks');

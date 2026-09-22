@@ -1,9 +1,12 @@
 const express = require('express');
 const app = express();
 app.use(express.json());
+const db = require('./db');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpec = require('./openapi.json');
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
+
+// Still used by POST / PUT / DELETE until Stage 3 moves them to SQL as well.
 let tasks = [
   { id: 1, title: 'Buy milk', done: false },
   { id: 2, title: 'Walk the dog', done: false },
@@ -22,16 +25,23 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
+
+// SQLite stores booleans as 0/1 — convert back so the API's JSON shape is unchanged.
+function toTask(row) {
+  return { id: row.id, title: row.title, done: row.done === 1 };
+}
+
 app.get('/tasks', (req, res) => {
-  res.json(tasks);
+  const rows = db.prepare('SELECT * FROM tasks').all();
+  res.json(rows.map(toTask));
 });
 
 app.get('/tasks/:id', (req, res) => {
-  const task = tasks.find(t => t.id === Number(req.params.id));
-  if (!task) {
+  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(req.params.id));
+  if (!row) {
     return res.status(404).json({ error: `Task ${req.params.id} not found` });
   }
-  res.json(task);
+  res.json(toTask(row));
 });
 
 app.post('/tasks', (req, res) => {
@@ -72,7 +82,7 @@ app.delete('/tasks/:id', (req, res) => {
   tasks.splice(index, 1);
   res.status(204).send();
 });
+
 app.listen(3000, () => {
   console.log('Server running on http://localhost:3000');
 });
-
