@@ -1,95 +1,116 @@
-# Task API
+# Task API — Containerized with Postgres
 
-A simple CRUD (Create, Read, Update, Delete) REST API for managing a to-do list, built with Node.js and Express. Data is stored in a **SQLite** database, so it survives server restarts.
+A small CRUD API for tasks, built across three assignments as an exercise in
+swapping storage without changing the API:
 
-## Install & run
+| Assignment | Storage | Runs on |
+|---|---|---|
+| A1 | an array in memory | the process |
+| A2 | a `tasks.db` file | SQLite |
+| A3 | rows in Postgres | a container |
+
+The endpoints have behaved identically throughout. Only the storage module changed.
+
+## Run it
+
+From a clean clone, one command:
 
 ```bash
-npm install
-node index.js
+copy .env.example .env     # cp .env.example .env on macOS/Linux
+docker compose up
 ```
 
-Server runs on `http://localhost:3000`. Interactive docs available at `http://localhost:3000/docs`.
+That builds the API image, starts Postgres 16 in a container, creates the
+`tasks` table if it's missing, and seeds three example tasks on first run.
+The API is then at http://localhost:3000.
 
-That single command is all a fresh clone needs. On first start the app creates `tasks.db`, creates the `tasks` table, and seeds three example tasks — no manual setup, no migration step.
+Nothing is installed on your machine — no Node, no Postgres.
+
+## Configuration
+
+Copy `.env.example` to `.env`. One variable:
+
+| Variable | Meaning |
+|---|---|
+| `DATABASE_URL` | Connection string: `postgres://user:password@host:port/dbname` |
+
+`.env` is git-ignored and holds the real password; `.env.example` carries
+placeholders so you know which keys to set.
+
+Inside Compose the app reaches the database at the hostname `db` — the service
+name — not `localhost`. From the API container, `localhost` would mean the API
+container itself.
 
 ## Endpoints
 
-| Method | Endpoint      | Description         |
-|--------|---------------|---------------------|
-| GET    | `/`           | API info            |
-| GET    | `/health`     | Health check        |
-| GET    | `/tasks`      | List all tasks      |
-| GET    | `/tasks/:id`  | Get a single task   |
-| POST   | `/tasks`      | Create a new task   |
-| PUT    | `/tasks/:id`  | Update a task       |
-| DELETE | `/tasks/:id`  | Delete a task       |
+| Method | Path | Success | Errors |
+|---|---|---|---|
+| GET | `/tasks` | 200 — all tasks | — |
+| GET | `/tasks/:id` | 200 — one task | 404 unknown id |
+| POST | `/tasks` | 201 — the created task | 400 missing/empty title |
+| PUT | `/tasks/:id` | 200 — the updated task | 400 empty title, 404 unknown id |
+| DELETE | `/tasks/:id` | 204 — no body | 404 unknown id |
+| GET | `/health` | 200 — also pings the database | 503 if unreachable |
+
+Interactive docs at `/docs` (Swagger UI).
+Errors come back as JSON: `{"error":"Task 5 not found"}`
 
 ## Example
 
-```bash
-curl -i http://localhost:3000/tasks/1
 ```
-
-```
+> curl -i http://localhost:3000/tasks
 HTTP/1.1 200 OK
+X-Powered-By: Express
 Content-Type: application/json; charset=utf-8
+Content-Length: 213
 
-{"id":1,"title":"Buy milk","done":false}
+[{"id":1,"title":"Read the assignment","done":false},
+ {"id":2,"title":"Run Postgres in Docker","done":true},
+ {"id":3,"title":"Swap storage to Postgres","done":false},
+ {"id":4,"title":"Survives restart","done":false}]
 ```
 
-## Why SQLite
+## The data in the database
 
-- **Zero setup** — no database server to install, configure or keep running. The library is one `npm install`.
-- **A single file** — the whole database is `tasks.db`, easy to inspect, copy, or delete and rebuild.
-- **It persists** — data written by the API is still there after the process stops and starts, which an in-memory array can never give you.
-
-`better-sqlite3` was chosen over other Node drivers because its queries are synchronous, so the storage code reads top to bottom with no `await` or callbacks.
-
-## Where the database lives
-
-`tasks.db` sits in the project root and is **created automatically** the first time the app starts. It's listed in `.gitignore` and deliberately not committed — the database is generated data, not source code, so every clone builds its own fresh copy with the three seeded tasks.
-
-Deleting `tasks.db` and restarting is a safe way to reset to a clean state.
-
-## Schema
-
-| Column  | Type      | Notes                                      |
-|---------|-----------|--------------------------------------------|
-| `id`    | INTEGER   | Primary key — SQLite assigns it            |
-| `title` | TEXT      | Required, non-empty                        |
-| `done`  | INTEGER   | `0` / `1` — SQLite has no boolean type     |
-
-The API converts `done` back to `true` / `false` on the way out, so the JSON shape is unchanged from the in-memory version.
-
-The three seed rows are inserted inside a transaction, which makes the seed all-or-nothing: a failure partway through rolls the whole thing back rather than leaving a half-populated table.
-
-## Safety — parameterized queries
-
-Every query uses `?` placeholders and passes values separately:
-
-```js
-db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+```
+> docker compose exec db psql -U postgres -d tasks -c "SELECT * FROM tasks;"
+ id |          title           | done
+----+--------------------------+------
+  1 | Read the assignment      | f
+  2 | Run Postgres in Docker   | t
+  3 | Swap storage to Postgres | f
+  4 | Survives restart         | f
+(4 rows)
 ```
 
-User input is never glued into the SQL string, so a crafted title or id is stored as data instead of being executed as part of the query.
+![Tasks table in Postgres](screenshots/postgres-data.png)
 
-## Exploring the database directly
+## Persistence
 
-The same `tasks.db` can be opened in [DB Browser for SQLite](https://sqlitebrowser.org/) while the server is running. There's no syncing between the two — they read the exact same file, so a change made by hand appears through the API immediately.
+Task 4 above is the evidence. It was created through the API, then both
+containers were destroyed and recreated:
 
-One query run in DB Browser's **Execute SQL** tab:
-
-```sql
-SELECT * FROM tasks WHERE done = 1;
+```bash
+docker compose down     # both containers removed entirely
+docker compose up
+curl localhost:3000/tasks   # the task is still there
 ```
 
-It returned only the completed tasks. The filtering happened inside the database rather than in JavaScript — the app never received the rows it didn't want.
+The rows live in the named volume `taskdata`, which outlives the containers.
+Without it, `docker compose down` would take the data with it.
 
-![Database in DB Browser](./db-screenshot.png)
+## Notes
 
-## Proving the API didn't change
+Postgres is pinned to **16** deliberately. Version 18 relocated its data
+directory to `/var/lib/postgresql`, so the conventional
+`-v …:/var/lib/postgresql/data` mount makes it refuse to start on `latest`.
 
-The same `curl` commands written for the in-memory version still pass unchanged against the SQLite version — same endpoints, same request and response shapes, same status codes (`200`, `201`, `204`, `400`, `404`).
+The healthcheck on the `db` service, combined with
+`depends_on: condition: service_healthy`, stops the API starting before
+Postgres accepts connections. Plain `depends_on` only waits for the container
+to start, not to be ready — without the healthcheck the app often crashes on
+its first boot.
 
-That's the real proof that storage is an implementation detail: clients were never told where the data lives, only what the API promises to return. The promise stayed the same while everything behind it moved from memory to disk.
+## Built with
+
+Node.js · Express 5 · PostgreSQL 16 · node-postgres (`pg`) · Docker Compose
