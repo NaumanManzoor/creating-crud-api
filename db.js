@@ -1,45 +1,59 @@
-// db.js — the storage layer.
-// Opens (and on first run, creates) tasks.db, makes sure the schema exists,
-// and seeds three example tasks ONLY when the table is empty.
+const { Pool } = require('pg');
 
-const Database = require('better-sqlite3');
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Opening a SQLite file that doesn't exist creates it. That's the whole "install".
-const db = new Database('tasks.db');
+async function init() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id    SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      done  BOOLEAN NOT NULL DEFAULT false
+    )
+  `);
 
-// Create the table only if it isn't already there, so this is safe to run on every start.
-// INTEGER PRIMARY KEY makes SQLite hand out the ids for us.
-// SQLite has no real boolean type, so `done` is stored as 0 / 1.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tasks (
-    id    INTEGER PRIMARY KEY,
-    title TEXT    NOT NULL,
-    done  INTEGER NOT NULL DEFAULT 0
-  )
-`);
-
-// Seed guard: count the rows first, insert only when there are none.
-// This is what stops the examples from multiplying on every restart.
-const { count } = db.prepare('SELECT COUNT(*) AS count FROM tasks').get();
-
-if (count === 0) {
-  const insert = db.prepare('INSERT INTO tasks (title, done) VALUES (?, ?)');
-
-  // Wrapping the three inserts in a transaction makes the seed all-or-nothing:
-  // if the second insert failed, the first would be rolled back too.
-  const seedTasks = db.transaction((tasks) => {
-    for (const task of tasks) {
-      insert.run(task.title, task.done ? 1 : 0);
-    }
-  });
-
-  seedTasks([
-    { title: 'Buy milk', done: false },
-    { title: 'Walk the dog', done: false },
-    { title: 'Finish assignment', done: true },
-  ]);
-
-  console.log('Database seeded with 3 example tasks');
+  const { rows } = await pool.query('SELECT COUNT(*) AS count FROM tasks');
+  if (Number(rows[0].count) === 0) {
+    await pool.query(
+      'INSERT INTO tasks (title, done) VALUES ($1, $2), ($3, $4), ($5, $6)',
+      ['Read the assignment', false, 'Run Postgres in Docker', true, 'Swap storage to Postgres', false]
+    );
+    console.log('Seeded 3 example tasks');
+  }
 }
 
-module.exports = db;
+async function getAll() {
+  const { rows } = await pool.query('SELECT * FROM tasks ORDER BY id');
+  return rows;
+}
+
+async function getById(id) {
+  const { rows } = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+  return rows[0];
+}
+
+async function create(title, done = false) {
+  const { rows } = await pool.query(
+    'INSERT INTO tasks (title, done) VALUES ($1, $2) RETURNING *',
+    [title, done]
+  );
+  return rows[0];
+}
+
+async function update(id, title, done) {
+  const { rows } = await pool.query(
+    'UPDATE tasks SET title = $1, done = $2 WHERE id = $3 RETURNING *',
+    [title, done, id]
+  );
+  return rows[0];
+}
+
+async function remove(id) {
+  const result = await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
+  return result.rowCount;
+}
+
+async function ping() {
+  await pool.query('SELECT 1');
+}
+
+module.exports = { pool, init, getAll, getById, create, update, remove, ping };
