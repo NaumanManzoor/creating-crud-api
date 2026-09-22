@@ -6,13 +6,6 @@ const swaggerUi = require('swagger-ui-express');
 const openapiSpec = require('./openapi.json');
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
-// Still used by POST / PUT / DELETE until Stage 3 moves them to SQL as well.
-let tasks = [
-  { id: 1, title: 'Buy milk', done: false },
-  { id: 2, title: 'Walk the dog', done: false },
-  { id: 3, title: 'Finish assignment', done: true }
-];
-let nextId = 4;
 
 app.get('/', (req, res) => {
   res.json({
@@ -59,8 +52,9 @@ app.post('/tasks', (req, res) => {
 });
 
 app.put('/tasks/:id', (req, res) => {
-  const task = tasks.find(t => t.id === Number(req.params.id));
-  if (!task) {
+  const id = Number(req.params.id);
+  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  if (!row) {
     return res.status(404).json({ error: `Task ${req.params.id} not found` });
   }
 
@@ -69,19 +63,21 @@ app.put('/tasks/:id', (req, res) => {
     return res.status(400).json({ error: 'title cannot be empty' });
   }
 
-  if (title !== undefined) task.title = title;
-  if (done !== undefined) task.done = done;
+  // Fall back to the row's current values so a partial update never blanks a column.
+  const newTitle = title !== undefined ? title : row.title;
+  const newDone = done !== undefined ? (done ? 1 : 0) : row.done;
 
-  res.json(task);
+  db.prepare('UPDATE tasks SET title = ?, done = ? WHERE id = ?').run(newTitle, newDone, id);
+
+  res.json({ id, title: newTitle, done: newDone === 1 });
 });
 
 app.delete('/tasks/:id', (req, res) => {
-  const index = tasks.findIndex(t => t.id === Number(req.params.id));
-  if (index === -1) {
+  // .run() reports how many rows it touched — 0 means that id doesn't exist.
+  const result = db.prepare('DELETE FROM tasks WHERE id = ?').run(Number(req.params.id));
+  if (result.changes === 0) {
     return res.status(404).json({ error: `Task ${req.params.id} not found` });
   }
-
-  tasks.splice(index, 1);
   res.status(204).send();
 });
 
