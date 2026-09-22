@@ -83,7 +83,7 @@ Content-Length: 213
 (4 rows)
 ```
 
-![Tasks table in Postgres](screenshots/postgres-data.png)
+![Tasks table in Postgres](postgres-data.png)
 
 ## Persistence
 
